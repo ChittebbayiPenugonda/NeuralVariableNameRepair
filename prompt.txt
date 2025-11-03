@@ -1,0 +1,5 @@
+Examine the given code snippet. Read through it and map each <ID_x> placeholder to the original variable name. Respond ONLY in JSON format with the mapping.
+
+Example:
+{"<ID_1>": "num_var", "<ID_2>": "length"}
+

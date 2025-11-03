@@ -5,10 +5,11 @@
 #   pip install python-dotenv huggingface_hub
 
 from pathlib import Path
-import json, re, os
+import json, re, os, sys
 from tree_sitter import Node
 from tree_sitter_languages import get_parser
 from datasets import load_dataset
+from tqdm import tqdm
 
 # --- HF auth from .env ---
 from dotenv import load_dotenv
@@ -23,8 +24,10 @@ login(token=HF_TOKEN)
 CACHE_DIR      = "./the_stack_cpp"    # HF datasets cache on disk
 SAVE_CPP_DIR   = Path("cpp_samples")  # where to save a few raw .cpp files (optional)
 SAVE_CPP_N     = 20                   # save first N .cpp files (set 0 to skip)
-OUTPUT_JSONL   = Path("data_cpp.jsonl")
-MAX_FUNCS      = 10                   # stop after writing this many functions
+EXAMPLE_JSONL  = Path("example_output.jsonl")  # small example for GitHub
+EXAMPLE_N      = 5                    # number of examples to save
+OUTPUT_JSONL   = Path("data/data_cpp.jsonl")
+MAX_FUNCS      = 3000                  # stop after writing this many functions
 DEBUG          = True                 # print small progress
 # =================================================
 
@@ -136,10 +139,17 @@ def main():
     if SAVE_CPP_N > 0:
         SAVE_CPP_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Create data directory for output
+    OUTPUT_JSONL.parent.mkdir(parents=True, exist_ok=True)
+
     written = 0
     saved_cpp = 0
+    example_written = 0
 
-    with OUTPUT_JSONL.open("w", encoding="utf-8") as fw:
+    with OUTPUT_JSONL.open("w", encoding="utf-8") as fw, \
+         EXAMPLE_JSONL.open("w", encoding="utf-8") as fw_example:
+        # Use tqdm to show progress
+        pbar = tqdm(desc="Processing C++ files", unit="funcs", total=MAX_FUNCS)
         for i, row in enumerate(ds):
             content = row.get("content")
             if not content:
@@ -150,21 +160,30 @@ def main():
                 (SAVE_CPP_DIR / f"row_{i:06d}.cpp").write_text(content, encoding="utf-8")
                 saved_cpp += 1
 
-            # Extract functions from this row
+            # Extract functions from this row (only use first function per file)
             rows = extract_functions_from_source(content, file_tag=f"row_{i:06d}")
-            for r in rows:
+            if rows:  # Only process if we found at least one function
+                r = rows[0]  # Take only the first function from this file
                 fw.write(json.dumps(r, ensure_ascii=False) + "\n")
                 written += 1
+                pbar.update(1)  # Update progress bar
+                
+                # Also write to example file (for GitHub)
+                if example_written < EXAMPLE_N:
+                    fw_example.write(json.dumps(r, ensure_ascii=False) + "\n")
+                    example_written += 1
+                
                 if written >= MAX_FUNCS:
+                    pbar.close()
                     if DEBUG:
-                        print(f"[ok] wrote {written} functions → {OUTPUT_JSONL} (saved {saved_cpp} cpp samples)")
-                    return
-
-            if DEBUG and (i % 500 == 0):
-                print(f"[info] scanned rows={i}, written={written}, saved_cpp={saved_cpp}")
-
+                        print(f"[ok] wrote {written} functions → {OUTPUT_JSONL} (saved {saved_cpp} cpp samples, {example_written} examples)")
+                    fw.flush()  # Ensure data is written
+                    fw_example.flush()
+                    os._exit(0)  # Force immediate exit without cleanup
+            
+        pbar.close()
     if DEBUG:
-        print(f"[done] wrote {written} functions → {OUTPUT_JSONL} (saved {saved_cpp} cpp samples)")
+        print(f"[done] wrote {written} functions → {OUTPUT_JSONL} (saved {saved_cpp} cpp samples, {example_written} examples)")
 
 if __name__ == "__main__":
     main()
